@@ -14,6 +14,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 RSS_FEED_URL = os.getenv('RSS_FEED_URL')
 UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL'))
 DATABASE_URL = os.getenv('DATABASE_URL')
+stop_flag = False
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +88,23 @@ def set_announcement_state(enabled):
     except Error as e:
         logger.error(f"Erreur lors de la définition de l'état des annonces: {e}")
 
+def stop_bot():
+    # Arrêter le bot en douceur
+    bot.stop_polling()
+    
+    # Arrêter les tâches planifiées
+    global stop_flag
+    stop_flag = True
+    
+    # Fermer la connexion à la base de données
+    if conn:
+        conn.close()
+        logger.info("Connexion à la base de données fermée.")
+    
+    logger.info("Bot arrêté.")
+    # Terminer le programme
+    os._exit(0)
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Bonjour ! Je suis un robot qui surveille et diffuse les annonces sur le site. Un administrateur peut utiliser /toggle pour activer ou désactiver les annonces pour tout le monde.")
@@ -110,6 +128,66 @@ def toggle_announcements(message):
     else:
         bot.reply_to(message, "Les annonces sont maintenant désactivées pour tout le monde.")
     logger.info(f"État des annonces changé à {new_state} par l'administrateur {message.from_user.id}")
+
+@bot.message_handler(commands=['shutdown'])
+def shutdown_bot(message):
+    # Vérifier si l'utilisateur est un administrateur
+    chat_member = bot.get_chat_member(message.chat.id, message.from_user.id)
+    if chat_member.status not in ['creator', 'administrator']:
+        bot.reply_to(message, "Seuls les administrateurs peuvent utiliser cette commande.")
+        logger.warning(f"Tentative d'utilisation de /shutdown par un non-admin : {message.from_user.id}")
+        return
+
+    bot.reply_to(message, "Le bot s'éteint maintenant...")
+    logger.info(f"Commande de shutdown reçue de l'administrateur {message.from_user.id}")
+
+    # Arrêter le bot proprement
+    stop_bot()
+
+@bot.message_handler(commands=['settings'])
+def handle_settings(message):
+    # Vérifier si l'utilisateur est un administrateur
+    chat_member = bot.get_chat_member(message.chat.id, message.from_user.id)
+    if chat_member.status not in ['creator', 'administrator']:
+        bot.reply_to(message, "Seuls les administrateurs peuvent utiliser cette commande.")
+        logger.warning(f"Tentative d'utilisation de /settings par un non-admin : {message.from_user.id}")
+        return
+
+    # Parse the command arguments
+    try:
+        _, option, value = message.text.split(maxsplit=2)
+    except ValueError:
+        bot.reply_to(message, "La commande est invalide. Utilisez /settings <option> <valeur>.")
+        return
+
+    if option not in ['rss_url', 'update_interval']:
+        bot.reply_to(message, "Option invalide. Les options disponibles sont : url, interval.")
+        return
+
+    if option == 'url':
+        update_rss_url(value)
+        bot.reply_to(message, f"L'URL du flux RSS a été mise à jour à {value}.")
+        logger.info(f"URL du flux RSS mise à jour à {value} par l'administrateur {message.from_user.id}")
+
+    elif option == 'interval':
+        try:
+            new_interval = int(value)
+            update_update_interval(new_interval)
+            bot.reply_to(message, f"L'intervalle de mise à jour a été mis à jour à {new_interval} secondes.")
+            logger.info(f"Intervalle de mise à jour mis à jour à {new_interval} secondes par l'administrateur {message.from_user.id}")
+        except ValueError:
+            bot.reply_to(message, "Valeur invalide pour l'intervalle de mise à jour. Veuillez entrer un entier.")
+
+def update_rss_url(new_url):
+    global RSS_FEED_URL
+    RSS_FEED_URL = new_url
+
+def update_update_interval(new_interval):
+    global UPDATE_INTERVAL
+    UPDATE_INTERVAL = new_interval
+    # Replanifiez la vérification du flux RSS avec le nouvel intervalle
+    schedule.clear()
+    schedule_check()
 
 def check_rss_feed():
     """ Vérifie le flux RSS et envoie les annonces si elles sont activées """
@@ -147,6 +225,9 @@ def schedule_check():
     schedule.every(UPDATE_INTERVAL).seconds.do(check_rss_feed)
     logger.info(f"Vérification du flux RSS planifiée toutes les {UPDATE_INTERVAL} secondes.")
 
+# Drapeau global pour arrêter le bot
+stop_flag = False
+
 if __name__ == "__main__":
     schedule_check()
     
@@ -156,6 +237,6 @@ if __name__ == "__main__":
     logger.info("Bot démarré.")
     
     # Exécuter les tâches planifiées
-    while True:
+    while not stop_flag:
         schedule.run_pending()
         time.sleep(1)
