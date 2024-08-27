@@ -2,6 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 import telebot
+from telebot import types
 import feedparser
 import schedule
 import time
@@ -138,11 +139,23 @@ def shutdown_bot(message):
         logger.warning(f"Tentative d'utilisation de /shutdown par un non-admin : {message.from_user.id}")
         return
 
-    bot.reply_to(message, "Le bot s'éteint maintenant...")
-    logger.info(f"Commande de shutdown reçue de l'administrateur {message.from_user.id}")
+    # Demander une confirmation à l'utilisateur
+    markup = types.InlineKeyboardMarkup()
+    confirm_button = types.InlineKeyboardButton(text="confirm", callback_data="confirm_shutdown")
+    cancel_button = types.InlineKeyboardButton(text="cancel", callback_data="cancel_shutdown")
+    markup.add(confirm_button, cancel_button)
+    bot.reply_to(message, "Êtes-vous sûr de vouloir éteindre le bot ? Cliquez sur `confirmer` pour éteindre le bot et sur `annuler` pour annuler.", reply_markup=markup)
 
-    # Arrêter le bot proprement
-    stop_bot()
+# Gérer la réponse de confirmation ou d'annulation
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_shutdown", "cancel_shutdown"])
+def handle_shutdown_confirmation(call):
+    if call.data == "confirm_shutdown":
+        bot.send_message(call.message.chat.id, "Le bot s'éteint maintenant...")
+        logger.info(f"Confirmation de shutdown reçue de l'administrateur {call.from_user.id}")
+        stop_bot()  # Arrêter le bot proprement
+    else:
+        bot.send_message(call.message.chat.id, "Arrêt annulé.")
+        logger.info(f"Shutdown annulé par l'administrateur {call.from_user.id}")
 
 @bot.message_handler(commands=['settings'])
 def handle_settings(message):
