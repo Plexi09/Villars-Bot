@@ -38,6 +38,7 @@ def create_connection():
     """ Crée une connexion à la base de données SQLite """
     try:
         conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
+        logger.info("Connexion à la base de données réussie.")
         return conn
     except Error as e:
         logger.error(f"Erreur lors de la connexion à la base de données: {e}")
@@ -53,6 +54,7 @@ def create_table():
             CREATE TABLE IF NOT EXISTS subscriptions
             (chat_id INTEGER PRIMARY KEY, subscribed BOOLEAN)
         ''')
+        logger.info("Table 'subscriptions' créée avec succès.")
         conn.commit()
     except Error as e:
         logger.error(f"Erreur lors de la création de la table: {e}")
@@ -65,7 +67,12 @@ def is_subscribed(chat_id):
     try:
         cursor.execute('SELECT subscribed FROM subscriptions WHERE chat_id = ?', (chat_id,))
         result = cursor.fetchone()
-        return result[0] if result else False
+        if result:
+            logger.info(f"L'utilisateur {chat_id} est abonné: {result[0]}")
+            return result[0]
+        else:
+            logger.info(f"L'utilisateur {chat_id} n'est pas abonné.")
+            return False
     except Error as e:
         logger.error(f"Erreur lors de la vérification de l'abonnement: {e}")
         return False
@@ -76,12 +83,14 @@ def set_subscription(chat_id, subscribed):
         cursor.execute('INSERT OR REPLACE INTO subscriptions (chat_id, subscribed) VALUES (?, ?)',
                         (chat_id, subscribed))
         conn.commit()
+        logger.info(f"Abonnement mis à jour pour l'utilisateur {chat_id}: {subscribed}")
     except Error as e:
         logger.error(f"Erreur lors de la définition de l'abonnement: {e}")
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Bonjour ! Je suis un robot qui surveille les flux RSS. Utilisez /annonces on pour vous abonner aux annonces.")
+    bot.reply_to(message, "Bonjour ! Je suis un robot qui surveille et difuse les annonces sur le site. Ecrivez `/annonces on` pour vous abonner aux annonces.")
+    logger.info(f"Message de bienvenue envoyé à l'utilisateur {message.chat.id}")
 
 @bot.message_handler(commands=['annonces'])
 def handle_subscription(message):
@@ -90,6 +99,7 @@ def handle_subscription(message):
     
     if len(command) != 2 or command[1] not in ['on', 'off']:
         bot.reply_to(message, "Usage incorrect. Utilisez /annonces on pour vous abonner ou /annonces off pour vous désabonner.")
+        logger.warning(f"Usage incorrect de la commande /annonces par l'utilisateur {chat_id}: {message.text}")
         return
 
     subscribed = command[1] == 'on'
@@ -97,8 +107,10 @@ def handle_subscription(message):
     
     if subscribed:
         bot.reply_to(message, "Vous êtes maintenant abonné aux annonces.")
+        logger.info(f"Utilisateur {chat_id} abonné aux annonces.")
     else:
         bot.reply_to(message, "Vous êtes maintenant désabonné des annonces.")
+        logger.info(f"Utilisateur {chat_id} désabonné des annonces.")
 
 def check_rss_feed():
     """ Vérifie le flux RSS et envoie les annonces """
@@ -124,9 +136,13 @@ Nouvelle annonce de {entry.author}:
         cursor.execute('SELECT chat_id FROM subscriptions WHERE subscribed = ?', (True,))
         subscribed_chats = cursor.fetchall()
         
+        if not subscribed_chats:
+            logger.info("Aucun utilisateur abonné à qui envoyer l'annonce.")
+        
         for chat in subscribed_chats:
             try:
                 bot.send_message(chat[0], announcement)
+                logger.info(f"Annonce envoyée à l'utilisateur {chat[0]}.")
             except Exception as e:
                 logger.error(f"Erreur lors de l'envoi du message au chat {chat[0]}: {e}")
     except Error as e:
@@ -135,6 +151,7 @@ Nouvelle annonce de {entry.author}:
 def schedule_check():
     """ Planifie la vérification du flux RSS """
     schedule.every(UPDATE_INTERVAL).seconds.do(check_rss_feed)
+    logger.info(f"Vérification du flux RSS planifiée toutes les {UPDATE_INTERVAL} secondes.")
 
 if __name__ == "__main__":
     schedule_check()
@@ -142,6 +159,7 @@ if __name__ == "__main__":
     # Démarrer le bot dans un thread séparé
     import threading
     threading.Thread(target=bot.polling, args=(True,)).start()
+    logger.info("Bot démarré.")
     
     # Exécuter les tâches planifiées
     while True:
